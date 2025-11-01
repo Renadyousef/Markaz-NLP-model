@@ -1,0 +1,21 @@
+# Core ML + NLP
+torch>=2.0.0
+transformers>=4.45.0
+arabert==1.0.1
+nltk>=3.8.1
+tqdm>=4.66.0
+
+# Flask API
+flask>=3.0.0
+
+# Environment + Utils
+python-dotenv>=1.0.1
+
+# OpenAI API
+openai>=1.3.5
+
+
+# If your Hugging Face models require trust_remote_code (most do now)
+accelerate>=0.31.0
+huggingface-hub>=0.25.0
+safetensors>=0.4.3
