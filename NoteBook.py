@@ -14,6 +14,8 @@ import re
 from nltk.tokenize import sent_tokenize
 import random
 from transformers import pipeline
+# from camel_tools.tokenizers.sent import simple_sentence_tokenize
+
 
 
 load_dotenv()  # Loads HF_TOKEN automatically
@@ -45,7 +47,7 @@ ner = pipeline(
 # In[3]:
 
 
-# Load Arabic GPT3.5 for text generation to use in genrating other MQS options
+# genrating other MQS options
 load_dotenv()  
 from transformers import pipeline
 from dotenv import load_dotenv
@@ -55,10 +57,10 @@ import openai
 # Load .env file
 load_dotenv()
 
-# Get the OpenAI key
+# Get the key
 api_key = os.getenv("OPENAI_API_KEY")
 
-# Debug check
+# Debug check is it connecting?
 if api_key:
     print("✅ OpenAI API key loaded successfully")
 else:
@@ -71,10 +73,30 @@ openai.api_key = api_key
 # In[4]:
 
 
+import re
+
+def arabic_sentence_split(text, max_words=150):
+    # Split by sentence-ending punctuation first
+    sentences = re.split(r'(?<=[\.\؟\!])\s+', text.strip())
+    result = []
+    for s in sentences:
+        words = s.split()
+        if len(words) <= max_words:
+            result.append(s)
+        else:
+            # Chunk long sentences safely
+            for i in range(0, len(words), max_words):
+                result.append(" ".join(words[i:i+max_words]))
+    return result
+
+
+# In[5]:
+
+
 def generate_question_text(entity, pos, word, sentence=None):
     """Generate natural Arabic question from entity + POS with more coverage and variety."""
     
-    # --- Person ---
+    # Person entity
     if entity == "PER":
         if pos in ["noun", "noun_prop"]:
             return f"من هو {word}؟"
@@ -83,11 +105,11 @@ def generate_question_text(entity, pos, word, sentence=None):
         else:
             return f"إلى أي شخص تشير كلمة '{word}'؟"
     
-    # --- Location ---
+    # Location 
     if entity == "LOC":
         return f"أين تقع {word}؟"
     
-    # --- Organization ---
+    # Organization
     if entity == "ORG":
         if pos == "noun":
             return f"ما هي المنظمة المسماة {word}؟"
@@ -96,27 +118,27 @@ def generate_question_text(entity, pos, word, sentence=None):
         else:
             return f"اذكر المنظمة المرتبطة بكلمة '{word}'؟"
     
-    # --- Date / Time ---
+    #Date / Time 
     if entity in ["DATE", "TIME"]:
         return f"متى حدث ذلك؟ (الإشارة إلى {word})"
     
-    # --- Number / Quantity ---
+    #Number / Quantity
     if entity in ["NUM", "QUANTITY", "PERCENT"]:
         return f"ما هي القيمة العددية المذكورة: ____ (الإجابة {word})؟"
     
-    # --- Miscellaneous / Product / Event ---
+    # Miscellaneous / Product / Event
     if entity in ["EVENT", "WORK_OF_ART", "MISC"]:
         return f"إلى أي شيء يشير {word}؟"
     
-    # --- Default Cloze (fill-in-the-blank) ---
+    # Default Cloze (fill-in-the-blank)
     if sentence:
         return f"أكمل الفراغ: {sentence.replace(word, '____')}"
     
-    # --- Fallback ---
+    #Fallback in case
     return f"صف الكلمة: {word}"
 
 
-# In[5]:
+# In[6]:
 
 
 import random
@@ -143,7 +165,7 @@ def generate_TF_question(sentence, entity_word, entity_type, ner_tags):
                 {"role": "system", "content": "أنت مساعد لإنشاء أسئلة صح أو خطأ باللغة العربية."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=50,
+            max_tokens=150,
             temperature=0.7
         )
 
@@ -166,49 +188,45 @@ def generate_TF_question(sentence, entity_word, entity_type, ner_tags):
         return {"type": "TF", "statement": false_statement, "answer": False}
 
 
-# In[6]:
+# In[7]:
 
 
 difficulty_settings = {
     "easy": {
         "num_questions": 5,
-        "tf_ratio": 0.7,       # 70% TF, 30% MCQ
-        "mcq_distractor_type": "simple"  # simple placeholder distractors
+        "tf_ratio": 0.7,       
+        "mcq_distractor_type": "simple"  
     },
     "medium": {
         "num_questions": 10,
-        "tf_ratio": 0.5,       # balanced
-        "mcq_distractor_type": "medium"  # some context-based distractors
+        "tf_ratio": 0.5,       
+        "mcq_distractor_type": "medium"  
     },
     "hard": {
         "num_questions": 15,
-        "tf_ratio": 0.3,       # mostly MCQ
-        "mcq_distractor_type": "challenging"  # semantically close distractors
+        "tf_ratio": 0.3,       
+        "mcq_distractor_type": "challenging"  
     }
 }
 
 
-# In[7]:
+# In[8]:
 
 
 import random
-
+import openai
 
 def make_mq_options(entity_label, correct_entity, sentence, num_distractors=2):
-    """
-    Generate MCQ options for a given entity using GPT-3.5 and the sentence context.
-    
-    entity_label: NER type of the correct entity (not used here but kept for compatibility)
-    correct_entity: the correct answer
-    sentence: full sentence containing the entity
-    num_distractors: number of distractors to generate
-    """
     distractors = []
+
     prompt = (
-        f"أعطني {num_distractors} كلمات عربية (كلمة واحدة فقط لكل بديل) "
+        f"أعطني {num_distractors} كلمات عربية (كلمة واحدة لكل بديل) "
         f"تكون بدائل خاطئة لكلمة '{correct_entity}' في الجملة التالية: {sentence}. "
+        f"كن محترمًا وابتعد عن أي كلمات جارحة أو مسيئة أو عنصرية أو جنسية. "
         f"أجب فقط بالكلمات مفصولة بفاصلة."
     )
+
+    gpt_failed = False
 
     try:
         response = openai.ChatCompletion.create(
@@ -217,33 +235,37 @@ def make_mq_options(entity_label, correct_entity, sentence, num_distractors=2):
                 {"role": "system", "content": "أنت مساعد لإنشاء خيارات متعددة الاختيار باللغة العربية."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=50,
+            max_tokens=100,
             temperature=0.7
         )
 
-        # Extract generated text
         generated_text = response['choices'][0]['message']['content'].strip()
 
-        # Split by comma and clean
+        # Extract distractors
         for option in generated_text.split("،"):
             option_clean = option.strip()
             if option_clean and option_clean != correct_entity:
                 distractors.append(option_clean)
 
-        distractors = distractors[:num_distractors]
-
     except Exception as e:
         print("Error generating distractors:", e)
+        gpt_failed = True
+
+    # Only use fallback if GPT failed completely
+    if gpt_failed:
         distractors = [f"خيار{i+1}" for i in range(num_distractors)]
 
+    # Limit to requested number of distractors
+    distractors = distractors[:num_distractors]
+
     # Combine correct answer + distractors and shuffle
-    options = distractors + [correct_entity]
+    options = [correct_entity] + distractors
     random.shuffle(options)
 
     return options
 
 
-# In[8]:
+# In[9]:
 
 
 def generate_MCQ_question(entity_word, sentence, entity_type="LOC", full_text=None):
@@ -259,10 +281,11 @@ def generate_MCQ_question(entity_word, sentence, entity_type="LOC", full_text=No
     return {"type": "MCQ", "question": question_text, "options": options, "answer": entity_word}
 
 
-# In[9]:
+# In[10]:
 
 
 from tqdm import tqdm
+import pyarabic.araby as araby
 
 def make_quiz(text, level="medium"):
     settings = difficulty_settings.get(level, difficulty_settings["medium"])
@@ -271,9 +294,9 @@ def make_quiz(text, level="medium"):
 
     questions = []
     seen = set()
-    sentences = sent_tokenize(text)
+    sentences = arabic_sentence_split(text, max_words=200)
 
-    # Batch NER + POS once
+    # Batch NER + POS once since camel bert only takes 512 token at once
     ner_tags_all = ner(sentences, batch_size=32)
     pos_tags_all = pos(sentences, batch_size=32)
 
@@ -305,14 +328,14 @@ def make_quiz(text, level="medium"):
     return questions
 
 
-# In[10]:
+# In[11]:
 
 
-#✅ Strategy for 30 max we do less pages we will need to chunck the request to model 
+# Strategy for 30 max we do less pages we will need to chunck the request to model 
 from concurrent.futures import ThreadPoolExecutor
 
 def make_quiz_from_large_text(text, level="medium"):
-    sentences = sent_tokenize(text)
+    sentences =arabic_sentence_split(text, max_words=200)
     chunks = [sentences[i:i+200] for i in range(0, len(sentences), 200)]
     results = []
 
@@ -324,3 +347,10 @@ def make_quiz_from_large_text(text, level="medium"):
     return results
 
 
+
+# #### Since we don’t have a gold-standard labeled dataset for the 30 pages of Arabic text uploaded by users (our use case), we will evaluate our model on the dataset used in the original paper.
+
+# ![image.png](attachment:95cb5ff5-9de9-450f-9d4c-c050aaa86129.png)
+# #### Due to computational limitations on my CPU, I could not evaluate on the full dataset as done in the original paper. Instead, I randomly sampled approximately 500 words for evaluation. Despite the reduced sample size, the model achieved an F1 score of 84%, which is comparable to the 82.6% F1 reported in the original study. This suggests that even a small, random sample provides a reasonably accurate estimate of the model’s performance.
+
+# ## evaluating the POS model based on thier evaluation data set
